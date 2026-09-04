@@ -50,14 +50,14 @@ parser.add_argument("--fp8-recipe", type=str, default="tensorwise", choices=["ro
 parser.add_argument("--depth", type=int, default=4, help="depth of the Transformer model")
 parser.add_argument("--aspect-ratio", type=int, default=64, help="model_dim = depth * aspect_ratio")
 parser.add_argument("--head-dim", type=int, default=128, help="target head dimension for attention")
-parser.add_argument("--max-seq-len", type=int, default=2048, help="max context length")
-parser.add_argument("--window-pattern", type=str, default="SSSL", help="sliding window pattern tiled across layers: L=full, S=half context (e.g. 'SSL')")
+parser.add_argument("--max-seq-len", type=int, default=1024, help="max context length (T4-safe default)")
+parser.add_argument("--window-pattern", type=str, default="L", help="attention pattern (T4 default: full-context SDPA)")
 # Training horizon (only one used, in order of precedence)
 parser.add_argument("--num-iterations", type=int, default=-1, help="explicit number of optimization steps (-1 = disable)")
 parser.add_argument("--target-flops", type=float, default=-1.0, help="calculate num_iterations to reach target_flops (-1 = disable)")
-parser.add_argument("--target-param-data-ratio", type=float, default=12, help="calculate num_iterations to maintain data:param ratio (Chinchilla=20, -1 = disable)")
+parser.add_argument("--target-param-data-ratio", type=float, default=4, help="calculate num_iterations to maintain data:param ratio (T4 default: 4)")
 # Optimization
-parser.add_argument("--device-batch-size", type=int, default=32, help="per-device batch size. good number to reduce to 16,8,4,... if you OOM on VRAM.")
+parser.add_argument("--device-batch-size", type=int, default=1, help="per-device batch size (T4-safe default; increase only if VRAM allows)")
 parser.add_argument("--total-batch-size", type=int, default=-1, help="total batch size in tokens. decent numbers are e.g. 524288. (-1 = auto-compute optimal)")
 parser.add_argument("--embedding-lr", type=float, default=0.3, help="learning rate for embedding parameters (Adam)")
 parser.add_argument("--unembedding-lr", type=float, default=0.008, help="learning rate for unembedding parameters (Adam)")
@@ -98,6 +98,11 @@ print0(f"COMPUTE_DTYPE: {COMPUTE_DTYPE} ({COMPUTE_DTYPE_REASON})")
 # wandb logging init
 use_dummy_wandb = args.run == "dummy" or not master_process
 wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", name=args.run, config=user_config)
+loss_log_file = None
+if master_process:
+    loss_log_file = open("train_loss.csv", "a", buffering=1)
+    if loss_log_file.tell() == 0:
+        loss_log_file.write("step,loss,learning_rate,tokens_per_sec\n")
 
 # Flash Attention status
 from nanochat.flash_attention import USE_FA3
@@ -565,6 +570,8 @@ while True:
         eta_str = ""
     epoch = f"{dataloader_state_dict['epoch']} pq: {dataloader_state_dict['pq_idx']} rg: {dataloader_state_dict['rg_idx']}"
     print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | bf16_mfu: {mfu:.2f} | epoch: {epoch} | total time: {total_training_time/60:.2f}m{eta_str}")
+    if loss_log_file is not None:
+        loss_log_file.write(f"{step},{debiased_smooth_loss:.8f},{lrm:.8f},{tok_per_sec}\n")
     if step % 100 == 0:
         log_data = {
             "step": step,
@@ -600,5 +607,7 @@ if val_bpb is not None:
     print0(f"Minimum validation bpb: {min_val_bpb:.6f}")
 
 # cleanup
+if loss_log_file is not None:
+    loss_log_file.close()
 wandb_run.finish() # wandb run finish
 compute_cleanup()

@@ -12,3 +12,4 @@ eval_bundle/
 # Local setup
 CLAUDE.md
 wandb/
+train_loss.csv
