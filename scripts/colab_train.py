@@ -4,13 +4,12 @@ import runpy
 
 
 def main():
-    try:
-        from google.colab import drive
-    except ImportError as exc:
-        raise RuntimeError("This launcher must be run inside Google Colab.") from exc
-
-    drive.mount("/content/drive")
     drive_dir = "/content/drive/MyDrive/nanochat-runs"
+    if not os.path.isdir("/content/drive/MyDrive"):
+        raise RuntimeError(
+            "Google Drive is not mounted. Run `from google.colab import drive; "
+            "drive.mount('/content/drive')` in a Colab notebook cell first."
+        )
     os.makedirs(drive_dir, exist_ok=True)
     # Must be set before scripts.base_train imports the dataset/checkpoint modules.
     os.environ["NANOCHAT_BASE_DIR"] = drive_dir
