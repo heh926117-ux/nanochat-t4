@@ -184,8 +184,6 @@ class GPT(nn.Module):
         # Smear: mix previous token's embedding into current token (cheap bigram-like info)
         self.smear_gate = Linear(24, 1, bias=False)
         self.smear_lambda = nn.Parameter(torch.zeros(1))
-        # Backout: subtract cached mid-layer residual before final norm to remove low-level features
-        self.backout_lambda = nn.Parameter(0.2 * torch.ones(1))
         # Value embeddings (ResFormer-style): alternating layers, last layer always included
         head_dim = config.n_embd // config.n_head
         kv_dim = config.n_kv_head * head_dim
@@ -240,9 +238,8 @@ class GPT(nn.Module):
         for i in range(n_layer):
             self.x0_lambdas.data[i] = 0.20 - (0.15 * i / max(n_layer - 1, 1))
 
-        # Smear/backout scalars and smear gate must be explicitly initialized 
+        # Smear scalar and gate must be explicitly initialized
         torch.nn.init.zeros_(self.smear_lambda)
-        torch.nn.init.constant_(self.backout_lambda, 0.2)
         torch.nn.init.uniform_(self.smear_gate.weight, 0.0, 0.02)
 
         # Value embeddings (init like c_v: uniform with same std)
@@ -404,7 +401,7 @@ class GPT(nn.Module):
         value_embeds = sum(p.numel() for p in self.value_embeds.parameters())
         lm_head = sum(p.numel() for p in self.lm_head.parameters())
         transformer_matrices = sum(p.numel() for p in self.transformer.h.parameters())
-        scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel() + self.smear_gate.weight.numel() + self.smear_lambda.numel() + self.backout_lambda.numel()
+        scalars = self.resid_lambdas.numel() + self.x0_lambdas.numel() + self.smear_gate.weight.numel() + self.smear_lambda.numel()
         total = wte + value_embeds + lm_head + transformer_matrices + scalars
         assert total == sum(p.numel() for p in self.parameters()), "Parameter count mismatch"
         return {
@@ -426,7 +423,7 @@ class GPT(nn.Module):
         lm_head_params = list(self.lm_head.parameters())
         resid_params = [self.resid_lambdas]
         x0_params = [self.x0_lambdas]
-        smear_params = [self.smear_gate.weight, self.smear_lambda, self.backout_lambda]
+        smear_params = [self.smear_gate.weight, self.smear_lambda]
         assert len(list(self.parameters())) == len(matrix_params) + len(embedding_params) + len(lm_head_params) + len(value_embeds_params) + len(resid_params) + len(x0_params) + len(smear_params)
 
         # Scale the LR for the AdamW parameters by ∝1/√dmodel (tuned for 768 dim model)
@@ -493,18 +490,10 @@ class GPT(nn.Module):
 
         # Forward the trunk of the Transformer
         x0 = x  # save initial normalized embedding for x0 residual
-        n_layer = self.config.n_layer
-        backout_layer = n_layer // 2  # cache at halfway point
-        x_backout = None
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             ve = self.value_embeds[str(i)](idx).to(x.dtype) if str(i) in self.value_embeds else None
             x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)
-            if i == backout_layer:
-                x_backout = x
-        # Subtract mid-layer residual to remove low-level features before logit projection
-        if x_backout is not None:
-            x = x - self.backout_lambda.to(x.dtype) * x_backout
         x = norm(x)
 
         # Forward the lm_head (compute logits)
