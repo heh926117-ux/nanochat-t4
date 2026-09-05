@@ -4,7 +4,10 @@ import runpy
 
 
 def main():
-    drive_dir = "/content/drive/MyDrive/nanochat-runs"
+    drive_dir = os.environ.get(
+        "NANOCHAT_BASE_DIR",
+        "/content/drive/MyDrive/nanochat-runs",
+    )
     if not os.path.isdir("/content/drive/MyDrive"):
         raise RuntimeError(
             "Google Drive is not mounted. Run `from google.colab import drive; "
