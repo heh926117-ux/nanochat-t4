@@ -57,7 +57,7 @@ parser.add_argument("--num-iterations", type=int, default=-1, help="explicit num
 parser.add_argument("--target-flops", type=float, default=-1.0, help="calculate num_iterations to reach target_flops (-1 = disable)")
 parser.add_argument("--target-param-data-ratio", type=float, default=4, help="calculate num_iterations to maintain data:param ratio (T4 default: 4)")
 # Optimization
-parser.add_argument("--device-batch-size", type=int, default=4, help="per-device batch size (T4 speed default; reduce if OOM)")
+parser.add_argument("--device-batch-size", type=int, default=16, help="per-device batch size (T4 speed default; reduce if OOM)")
 parser.add_argument("--total-batch-size", type=int, default=-1, help="total batch size in tokens. decent numbers are e.g. 524288. (-1 = auto-compute optimal)")
 parser.add_argument("--embedding-lr", type=float, default=0.3, help="learning rate for embedding parameters (Adam)")
 parser.add_argument("--unembedding-lr", type=float, default=0.008, help="learning rate for unembedding parameters (Adam)")
@@ -77,6 +77,7 @@ parser.add_argument("--sample-every", type=int, default=2000, help="sample from 
 parser.add_argument("--save-every", type=int, default=1000, help="save checkpoints every N steps (Colab-safe default)")
 # Output
 parser.add_argument("--model-tag", type=str, default=None, help="override model tag for checkpoint directory name")
+parser.add_argument("--checkpoint-base-dir", type=str, default=None, help="base directory for checkpoints (defaults to NANOCHAT_BASE_DIR)")
 args = parser.parse_args()
 user_config = vars(args).copy()  # for logging
 # -----------------------------------------------------------------------------
@@ -158,7 +159,8 @@ model.init_weights() # 3) All tensors get initialized
 # If we are resuming, overwrite the model parameters with those of the checkpoint
 base_dir = get_base_dir()
 output_dirname = args.model_tag if args.model_tag else f"d{args.depth}" # e.g. d12
-checkpoint_dir = os.path.join(base_dir, "base_checkpoints", output_dirname)
+checkpoint_root = args.checkpoint_base_dir if args.checkpoint_base_dir else base_dir
+checkpoint_dir = os.path.join(checkpoint_root, "base_checkpoints", output_dirname)
 resuming = args.resume_from_step != -1
 if resuming:
     print0(f"Resuming optimization from step {args.resume_from_step}")
