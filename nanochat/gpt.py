@@ -74,9 +74,9 @@ class CausalSelfAttention(nn.Module):
         self.head_dim = self.n_embd // self.n_head
         assert self.n_embd % self.n_head == 0
         assert self.n_kv_head <= self.n_head and self.n_head % self.n_kv_head == 0
-        self.c_q = Linear(self.n_embd, self.n_head * self.head_dim, bias=False)
-        self.c_k = Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
-        self.c_v = Linear(self.n_embd, self.n_kv_head * self.head_dim, bias=False)
+        # Fused QKV projection: one matmul instead of three. This is useful on
+        # small GPUs such as the T4, where kernel-launch overhead is significant.
+        self.c_qkv = Linear(self.n_embd, self.n_head * self.head_dim + 2 * self.n_kv_head * self.head_dim, bias=False)
         self.c_proj = Linear(self.n_embd, self.n_embd, bias=False)
         self.ve_gate_channels = 12
         self.ve_gate = Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
@@ -86,9 +86,13 @@ class CausalSelfAttention(nn.Module):
 
         # Project the input to get queries, keys, and values
         # Shape: (B, T, H, D) - FA3's native layout, no transpose needed!
-        q = self.c_q(x).view(B, T, self.n_head, self.head_dim)
-        k = self.c_k(x).view(B, T, self.n_kv_head, self.head_dim)
-        v = self.c_v(x).view(B, T, self.n_kv_head, self.head_dim)
+        qkv = self.c_qkv(x)
+        q_size = self.n_head * self.head_dim
+        kv_size = self.n_kv_head * self.head_dim
+        q, k, v = qkv.split((q_size, kv_size, kv_size), dim=-1)
+        q = q.view(B, T, self.n_head, self.head_dim)
+        k = k.view(B, T, self.n_kv_head, self.head_dim)
+        v = v.view(B, T, self.n_kv_head, self.head_dim)
 
         # Value residual (ResFormer): mix in value embedding with input-dependent gate per head
         if ve is not None:
