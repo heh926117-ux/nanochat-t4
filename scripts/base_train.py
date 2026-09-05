@@ -69,6 +69,7 @@ parser.add_argument("--warmup-steps", type=int, default=40, help="number of step
 parser.add_argument("--warmdown-ratio", type=float, default=0.65, help="ratio of iterations for LR warmdown")
 parser.add_argument("--final-lr-frac", type=float, default=0.05, help="final LR as fraction of initial LR")
 parser.add_argument("--resume-from-step", type=int, default=-1, help="resume training from this step (-1 = disable)")
+parser.add_argument("--resume-lr-multiplier", type=float, default=1.0, help="multiply optimizer learning rates after resuming (e.g. 0.05 for a low-LR continuation)")
 # Evaluation
 parser.add_argument("--eval-every", type=int, default=500, help="evaluate val bpb every N steps (-1 = disable)")
 parser.add_argument("--eval-tokens", type=int, default=65536, help="number of tokens to evaluate val loss on (T4-safe default)")
@@ -326,6 +327,13 @@ optimizer = model.setup_optimizer(
 if resuming:
     optimizer.load_state_dict(optimizer_data)
     del optimizer_data
+    if args.resume_lr_multiplier != 1.0:
+        if args.resume_lr_multiplier <= 0:
+            raise ValueError("--resume-lr-multiplier must be positive")
+        for group in optimizer.param_groups:
+            group["initial_lr"] *= args.resume_lr_multiplier
+            group["lr"] *= args.resume_lr_multiplier
+        print0(f"Scaling resumed optimizer learning rates by {args.resume_lr_multiplier:g}")
 
 # -----------------------------------------------------------------------------
 # GradScaler for fp16 training (bf16/fp32 don't need it — bf16 has the same exponent range as fp32)
