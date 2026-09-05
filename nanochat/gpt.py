@@ -37,6 +37,7 @@ class GPTConfig:
     # Characters: L=long (full context), S=short (quarter context)
     # Examples: "L"=all full context, "SL"=alternating, "SSL"=two short then one long
     window_pattern: str = "SSSL"
+    mlp_ratio: float = 4.0
 
 
 def norm(x):
@@ -135,8 +136,9 @@ class CausalSelfAttention(nn.Module):
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.c_fc = Linear(config.n_embd, 4 * config.n_embd, bias=False)
-        self.c_proj = Linear(4 * config.n_embd, config.n_embd, bias=False)
+        hidden_dim = int(8 * round(config.mlp_ratio * config.n_embd / 8))
+        self.c_fc = Linear(config.n_embd, hidden_dim, bias=False)
+        self.c_proj = Linear(hidden_dim, config.n_embd, bias=False)
 
     def forward(self, x):
         x = self.c_fc(x)
